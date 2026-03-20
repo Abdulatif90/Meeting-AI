@@ -15,6 +15,7 @@ import { generateAvatarUri } from "@/lib/avatar";
 
 interface Props {
   onJoin: () => void;
+  isJoining?: boolean;
 };
 
 const DisabledVideoPreview = () => {
@@ -46,7 +47,7 @@ const AllowBrowserPermissions = () => {
   );
 };
 
-export const CallLobby = ({ onJoin }: Props) => {
+export const CallLobby = ({ onJoin, isJoining = false }: Props) => {
   const { useCameraState, useMicrophoneState } = useCallStateHooks();
 
   const { hasBrowserPermission: hasMicPermission } = useMicrophoneState();
@@ -80,10 +81,11 @@ export const CallLobby = ({ onJoin }: Props) => {
               </Link>
             </Button>
             <Button
+              disabled={isJoining}
               onClick={onJoin}
             >
               <LogInIcon />
-              Join Call
+              {isJoining ? "Joining..." : "Join Call"}
             </Button>
           </div>
         </div>
