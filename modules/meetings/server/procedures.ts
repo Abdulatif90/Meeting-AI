@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import type { GetOrCreateCallRequest } from "@stream-io/node-sdk";
 import { and, count, desc, eq, getTableColumns, ilike, sql } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -10,6 +11,27 @@ import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/constants";
 import { meetingsInsertSchema, meetingsUpdateSchema } from "../schemas";
 import { MeetingStatus } from "../types";
+
+const buildCallPayload = (meeting: { id: string; name: string; userId: string }): GetOrCreateCallRequest => ({
+  data: {
+    created_by_id: meeting.userId,
+    custom: {
+      meetingId: meeting.id,
+      meetingName: meeting.name,
+    },
+    settings_override: {
+      transcription: {
+        language: "en",
+        mode: "auto-on",
+        closed_caption_mode: "auto-on",
+      },
+      recording: {
+        mode: "auto-on",
+        quality: "1080p",
+      },
+    },
+  },
+});
 
 export const meetingsRouter = createTRPCRouter({
   generateToken: protectedProcedure.mutation(async ({ ctx }) => {
@@ -92,26 +114,7 @@ export const meetingsRouter = createTRPCRouter({
         .returning();
 
       const call = streamVideo.video.call("default", createdMeeting.id);
-      await call.create({
-        data: {
-          created_by_id: ctx.auth.user.id,
-          custom: {
-            meetingId: createdMeeting.id,
-            meetingName: createdMeeting.name
-          },
-          settings_override: {
-            transcription: {
-              language: "en",
-              mode: "auto-on",
-              closed_caption_mode: "auto-on",
-            },
-            recording: {
-              mode: "auto-on",
-              quality: "1080p",
-            },
-          },
-        },
-      });
+      await call.create(buildCallPayload(createdMeeting));
 
       const [existingAgent] = await db
         .select()
@@ -138,6 +141,40 @@ export const meetingsRouter = createTRPCRouter({
       ]);
 
       return createdMeeting;
+    }),
+  ensureCall: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [existingMeeting] = await db
+        .select({
+          id: meetings.id,
+          name: meetings.name,
+          userId: meetings.userId,
+        })
+        .from(meetings)
+        .where(
+          and(
+            eq(meetings.id, input.id),
+            eq(meetings.userId, ctx.auth.user.id),
+          )
+        );
+
+      if (!existingMeeting) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Meeting not found",
+        });
+      }
+
+      const call = streamVideo.video.call("default", existingMeeting.id);
+
+      try {
+        await call.get();
+      } catch {
+        await call.create(buildCallPayload(existingMeeting));
+      }
+
+      return { ok: true };
     }),
   getOne: protectedProcedure
     .input(z.object({ id: z.string() }))
