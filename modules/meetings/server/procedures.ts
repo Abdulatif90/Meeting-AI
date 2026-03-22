@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { agents, meetings, user } from "@/db/schema";
 import { generateAvatarUri } from "@/lib/avatar";
 import { streamVideo } from "@/lib/stream-video";
-import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
+import { createTRPCRouter, protectedProcedure, premiumProcedure } from "@/trpc/init";
 import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@/constants";
 
 import { MeetingStatus, StreamTranscriptItem } from "../types";
@@ -137,6 +137,64 @@ validity_in_seconds: issuedAt,
 
 return token;
 }),
+ensureCall: protectedProcedure
+.input(z.object({ id: z.string() }))
+.mutation(async ({ ctx, input }) => {
+const [existingMeeting] = await db
+.select()
+.from(meetings)
+.where(
+and(
+eq(meetings.id, input.id),
+eq(meetings.userId, ctx.auth.user.id),
+)
+);
+
+if (!existingMeeting) {
+throw new TRPCError({
+code: "NOT_FOUND",
+message: "Meeting not found",
+});
+}
+
+if (
+existingMeeting.status === MeetingStatus.Completed ||
+existingMeeting.status === MeetingStatus.Cancelled ||
+existingMeeting.status === MeetingStatus.Processing
+) {
+throw new TRPCError({
+code: "BAD_REQUEST",
+message: "Meeting can no longer be joined",
+});
+}
+
+const call = streamVideo.video.call("default", existingMeeting.id);
+await call.create({
+data: {
+created_by_id: ctx.auth.user.id,
+custom: {
+meetingId: existingMeeting.id,
+meetingName: existingMeeting.name,
+},
+settings_override: {
+transcription: {
+language: "en",
+mode: "auto-on",
+closed_caption_mode: "auto-on",
+},
+recording: {
+mode: "auto-on",
+quality: "1080p",
+},
+},
+},
+});
+
+return {
+id: existingMeeting.id,
+status: existingMeeting.status,
+};
+}),
 remove: protectedProcedure
 .input(z.object({ id: z.string() }))
 .mutation(async ({ ctx, input }) => {
@@ -182,7 +240,7 @@ message: "Meeting not found",
 
 return updatedMeeting;
 }),
-create: protectedProcedure
+create: premiumProcedure("meetings")
 .input(meetingsInsertSchema)
 .mutation(async ({ input, ctx }) => {
 const [createdMeeting] = await db
