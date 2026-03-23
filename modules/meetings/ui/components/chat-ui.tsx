@@ -36,7 +36,7 @@ export const ChatUI = ({
     trpc.meetings.generateChatToken.mutationOptions(),
   );
 
-  const [channel, setChannel] = useState<StreamChannel>();
+  const [channel, setChannel] = useState<StreamChannel | null>(null);
   const client = useCreateChatClient({
     apiKey: process.env.NEXT_PUBLIC_STREAM_CHAT_API_KEY!,
     tokenOrProvider: generateChatToken,
@@ -50,14 +50,32 @@ export const ChatUI = ({
   useEffect(() => {
     if (!client) return;
 
-    const channel = client.channel("messaging", meetingId, {
-      members: [userId],
+    let isCancelled = false;
+
+    const initChannel = async () => {
+      const nextChannel = client.channel("messaging", meetingId, {
+        members: [userId],
+      });
+
+      await nextChannel.watch();
+
+      if (!isCancelled) {
+        setChannel(nextChannel);
+      }
+    };
+
+    initChannel().catch((error) => {
+      console.error("Failed to initialize meeting chat", error);
     });
 
-    setChannel(channel);
+    return () => {
+      isCancelled = true;
+      setChannel(null);
+    };
   }, [client, meetingId, meetingName, userId]);
 
-  if (!client) {
+  if (!client || !channel) {
+
     return (
       <LoadingState
         title="Loading Chat"
@@ -65,7 +83,6 @@ export const ChatUI = ({
       />
     );
   }
-
   return (
     <div className="bg-white rounded-lg border overflow-hidden">
       <Chat client={client}>

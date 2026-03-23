@@ -7,6 +7,14 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatDuration(seconds: number) {
+  if (seconds < 60) {
+    return humanizeDuration(seconds * 1000, {
+      largest: 1,
+      round: true,
+      units: ["s"],
+    });
+  }
+
   return humanizeDuration(seconds * 1000, {
     largest: 1,
     round: true,

@@ -2,17 +2,26 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 
-export const CallEnded = () => {
+interface Props {
+  meetingId: string;
+  hadRecording: boolean;
+}
+
+export const CallEnded = ({ meetingId, hadRecording }: Props) => {
   return (
     <div className="flex flex-col items-center justify-center h-full bg-radial from-sidebar-accent to-sidebar">
       <div className="py-4 px-8 flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center justify-center gap-y-6 bg-background rounded-lg p-10 shadow-sm">
           <div className="flex flex-col gap-y-2 text-center">
             <h6 className="text-lg font-medium">You have ended the call</h6>
-            <p className="text-sm">Summary will appear in a few minutes.</p>
+            <p className="text-sm">
+              {hadRecording
+                ? "Recording saved. Transcript and summary are being prepared."
+                : "Meeting assets are being prepared."}
+            </p>
           </div>
           <Button asChild>
-            <Link href="/meetings">Back to meetings</Link>
+            <Link href={`/meetings/${meetingId}?tab=summary`}>Back to meeting</Link>
           </Button>
         </div>
       </div>

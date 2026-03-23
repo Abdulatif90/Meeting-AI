@@ -1,13 +1,10 @@
-import { EmptyState } from "@/components/empty-state"
+import { MeetingGetOne } from "../../types";
+import { MeetingDetailsTabs } from "./meeting-details-tabs";
 
-export const ProcessingState = () => {
-  return (
-    <div className="bg-white rounded-lg px-4 py-5 flex flex-col gap-y-8 items-center justify-center">
-      <EmptyState
-        image="/processing.svg"
-        title="Meeting completed"
-        description="This meeting was completed, a summary will appear soon"
-      />
-    </div>
-  )
+interface Props {
+  data: MeetingGetOne;
 }
+
+export const ProcessingState = ({ data }: Props) => {
+  return <MeetingDetailsTabs data={data} />;
+};
