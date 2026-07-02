@@ -55,7 +55,7 @@ const formatTranscriptForSummary = (
   return lines.join("\n").slice(0, 16000);
 };
 
-const buildSummaryFallback = (
+export const buildSummaryFallback = (
   transcript: Array<
     StreamTranscriptItem & {
       user: {
