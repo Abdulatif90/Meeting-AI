@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, getTableColumns, ilike, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { agents, meetings } from "@/db/schema";
@@ -11,10 +11,31 @@ import { DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MIN_PAGE_SIZE } from "@
 
 import { MeetingStatus } from "../types";
 import { meetingsInsertSchema, meetingsUpdateSchema } from "../schemas";
-import { fetchTranscriptWithSpeakers } from "../service";
+import { fetchTranscriptWithSpeakers, generateAiAnswer, listMeetings } from "../service";
 import { streamChat } from "@/lib/stream-chat";
 
 export const meetingsRouter = createTRPCRouter({
+  askAi: protectedProcedure
+    .input(z.object({ id: z.string().min(1), question: z.string().min(1).max(2000) }))
+    .mutation(async ({ ctx, input }) => {
+      const [meeting] = await db
+        .select()
+        .from(meetings)
+        .where(and(eq(meetings.id, input.id), eq(meetings.userId, ctx.auth.user.id)));
+
+      if (!meeting) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
+      }
+
+      if (!meeting.summary) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Meeting summary is not ready yet",
+        });
+      }
+
+      await generateAiAnswer(input.id, input.question, meeting.summary);
+    }),
   generateChatToken: protectedProcedure.mutation(async ({ ctx }) => {
     const token = streamChat.createToken(ctx.auth.user.id);
     await streamChat.upsertUser({
@@ -221,47 +242,6 @@ export const meetingsRouter = createTRPCRouter({
       })
     )
     .query(async ({ ctx, input }) => {
-      const { search, page, pageSize, status, agentId } = input;
-
-      const data = await db
-        .select({
-          ...getTableColumns(meetings),
-          agent: agents,
-          duration: sql<number>`EXTRACT(EPOCH FROM (ended_at - started_at))`.as("duration"),
-        })
-        .from(meetings)
-        .innerJoin(agents, eq(meetings.agentId, agents.id))
-        .where(
-          and(
-            eq(meetings.userId, ctx.auth.user.id),
-            search ? ilike(meetings.name, `%${search}%`) : undefined,
-            status ? eq(meetings.status, status) : undefined,
-            agentId ? eq(meetings.agentId, agentId) : undefined,
-          )
-        )
-        .orderBy(desc(meetings.createdAt), desc(meetings.id))
-        .limit(pageSize)
-        .offset((page - 1) * pageSize)
-
-      const [total] = await db
-        .select({ count: count() })
-        .from(meetings)
-        .innerJoin(agents, eq(meetings.agentId, agents.id))
-        .where(
-          and(
-            eq(meetings.userId, ctx.auth.user.id),
-            search ? ilike(meetings.name, `%${search}%`) : undefined,
-            status ? eq(meetings.status, status) : undefined,
-            agentId ? eq(meetings.agentId, agentId) : undefined,
-          )
-        );
-
-      const totalPages = Math.ceil(total.count / pageSize);
-
-      return {
-        items: data,
-        total: total.count,
-        totalPages,
-      };
+      return listMeetings(ctx.auth.user.id, input);
     }),
 });

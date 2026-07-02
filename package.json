@@ -5,7 +5,7 @@
   "scripts": {
     "test": "vitest",
     "test:run": "vitest run",
-    "dev": "next dev ",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next dev --turbo",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -81,6 +81,7 @@
     "@types/react-dom": "^19",
     "@types/react-highlight-words": "^0.20.1",
     "@vitest/coverage-v8": "^4.1.9",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.1",
     "eslint": "^9",
     "eslint-config-next": "15.3.2",

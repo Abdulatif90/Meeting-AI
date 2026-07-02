@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Channel as StreamChannel } from "stream-chat";
@@ -34,6 +36,9 @@ export const ChatUI = ({
   const trpc = useTRPC();
   const { mutateAsync: generateChatToken } = useMutation(
     trpc.meetings.generateChatToken.mutationOptions(),
+  );
+  const { mutateAsync: askAi, isPending: isAiPending } = useMutation(
+    trpc.meetings.askAi.mutationOptions(),
   );
 
   const [channel, setChannel] = useState<StreamChannel | null>(null);
@@ -91,7 +96,14 @@ export const ChatUI = ({
             <div className="flex-1 overflow-y-auto max-h-[calc(100vh-23rem)] border-b">
               <MessageList />
             </div>
-            <MessageInput />
+            <MessageInput
+              disabled={isAiPending}
+              overrideSubmitHandler={async (message) => {
+                if (!channel || !message.text?.trim()) return;
+                await channel.sendMessage({ text: message.text });
+                await askAi({ id: meetingId, question: message.text });
+              }}
+            />
           </Window>
           <Thread />
         </Channel>
