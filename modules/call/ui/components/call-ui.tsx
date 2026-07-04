@@ -90,6 +90,10 @@ export const CallUI = ({ meetingId, meetingName }: Props) => {
     if (!call) return;
 
     call.endCall().finally(() => {
+      // Release the devices explicitly — otherwise the camera light can stay
+      // on while the user sits on the "call ended" screen.
+      call.camera.disable().catch(() => {});
+      call.microphone.disable().catch(() => {});
       setShow("ended");
     });
   };

@@ -4,11 +4,20 @@ import {
   CallControls,
   useCallStateHooks,
   SpeakerLayout,
+  DefaultParticipantViewUI,
+  useParticipantViewContext,
 } from "@stream-io/video-react-sdk";
 
 import { Avatar, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { generateAvatarUri } from "@/lib/avatar";
+
+// Screenshare tile'da overlay ko'rsatmaydi; oddiy kamera tile'da standart UI.
+const SpotlightParticipantView = () => {
+  const { trackType } = useParticipantViewContext();
+  if (trackType === "screenShareTrack") return null;
+  return <DefaultParticipantViewUI />;
+};
 
 interface Props {
   onLeave: () => void;
@@ -52,8 +61,8 @@ export const CallActive = ({
         </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] flex-1 min-h-0">
-        <div className="min-h-80 rounded-3xl overflow-hidden bg-[#101213]">
-          <SpeakerLayout />
+        <div className="h-full rounded-3xl overflow-hidden bg-[#101213]">
+          <SpeakerLayout ParticipantViewUISpotlight={SpotlightParticipantView} />
         </div>
         <div className="bg-[#101213] rounded-3xl p-4 flex flex-col gap-y-4">
           <div className="flex flex-col gap-y-3">

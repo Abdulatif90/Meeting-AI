@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import Markdown from "react-markdown";
 import {
   BookOpenTextIcon,
@@ -13,14 +14,30 @@ import { format } from "date-fns";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/loading-state";
 import { GeneratedAvatar } from "@/components/generated-avatar";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDuration } from "@/lib/utils";
 
 import { MeetingGetOne } from "../../types";
-import { ChatProvider } from "./chat-provider";
 import { Transcript } from "./transcript";
+
+// The Ask AI chat depends on the browser-only Stream client and the auth
+// session, so it must not be server-rendered — SSR would render a different
+// loading state than the client and cause a hydration mismatch.
+const ChatProvider = dynamic(
+  () => import("./chat-provider").then((mod) => mod.ChatProvider),
+  {
+    ssr: false,
+    loading: () => (
+      <LoadingState
+        title="Loading Chat"
+        description="This may take a few seconds"
+      />
+    ),
+  },
+);
 
 const meetingTabs = ["summary", "transcript", "recording", "chat"] as const;
 

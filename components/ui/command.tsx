@@ -85,6 +85,13 @@ function CommandResponsiveDialog({
 
 }) {
   const isMobile = useIsMobile();
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+
+  // This is a client-only overlay (Cmd+K palette / search). Skipping SSR means
+  // Radix's useId-generated title/description IDs are only ever created on the
+  // client, so they can't diverge between server and client render.
+  if (!mounted) return null;
 
   if (isMobile) {
     return (

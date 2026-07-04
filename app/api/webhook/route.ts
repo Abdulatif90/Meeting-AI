@@ -24,8 +24,10 @@ import { StreamTranscriptItem } from "@/modules/meetings/types";
 
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const chatModel = process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
+// OpenAI retired "gpt-4o-realtime-preview"; the current GA realtime model is
+// "gpt-realtime". Override via OPENAI_REALTIME_MODEL if the account differs.
 const realtimeModel =
-  process.env.OPENAI_REALTIME_MODEL ?? "gpt-4o-realtime-preview";
+  process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime";
 
 /* ── In-memory lock to prevent duplicate AI replies from concurrent webhooks ── */
 const processingMessages = new Set<string>();
@@ -324,12 +326,13 @@ export async function POST(req: NextRequest) {
 
     const call = streamVideo.video.call("default", meetingId);
 
-    const participants = await call.queryCallParticipants({ limit: 10 });
-    const hasHostParticipant = participants.participants.some(
-      (participant) => participant.role === "admin"
-    );
+    // queryCallParticipants now requires a filter; read the live session's
+    // per-role counts instead. End the call once no host (admin) remains.
+    const { call: callState } = await call.get();
+    const hostCount =
+      callState.session?.participants_count_by_role?.admin ?? 0;
 
-    if (!hasHostParticipant) {
+    if (hostCount === 0) {
       await call.end();
     }
   } else if (

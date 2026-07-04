@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Channel as StreamChannel } from "stream-chat";
@@ -91,6 +93,8 @@ export const ChatUI = ({
             <div className="flex-1 overflow-y-auto max-h-[calc(100vh-23rem)] border-b">
               <MessageList />
             </div>
+            {/* Default submit sends the message to Stream, which fires the
+                `message.new` webhook → the agent's AI reply. */}
             <MessageInput />
           </Window>
           <Thread />

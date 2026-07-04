@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { ChevronRightIcon, TrashIcon, PencilIcon, MoreVerticalIcon } from "lucide-react";
 
