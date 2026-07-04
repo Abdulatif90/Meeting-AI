@@ -34,7 +34,12 @@ export const meetingsRouter = createTRPCRouter({
         });
       }
 
-      await generateAiAnswer(input.id, input.question, meeting.summary);
+      await generateAiAnswer({
+        meetingId: input.id,
+        agentId: meeting.agentId,
+        question: input.question,
+        meetingSummary: meeting.summary,
+      });
     }),
   generateChatToken: protectedProcedure.mutation(async ({ ctx }) => {
     const token = streamChat.createToken(ctx.auth.user.id);

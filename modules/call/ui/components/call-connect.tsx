@@ -64,9 +64,21 @@ export const CallConnect = ({
       setCall(_call);
 
       return () => {
-        if (_call.state.callingState !== CallingState.LEFT) {
-          _call.leave();
-          setCall(undefined);
+        setCall(undefined);
+        // Always release the devices so the camera/mic hardware light turns
+        // off — leave() alone does not stop the lobby preview track.
+        _call.camera.disable().catch(() => {});
+        _call.microphone.disable().catch(() => {});
+        // Only leave a call we actually joined. In React 19 dev, StrictMode
+        // double-invokes effects: the call is still IDLE on the first teardown,
+        // and leaving it would move the reused instance into a LEFT state —
+        // breaking video (and the agent session) on remount and throwing
+        // "Cannot leave call that has already been left".
+        const state = _call.state.callingState;
+        if (state === CallingState.JOINED || state === CallingState.JOINING) {
+          _call.leave().catch((error) => {
+            console.error("Failed to leave call", error);
+          });
         }
       };
   }, [client, meetingId]);

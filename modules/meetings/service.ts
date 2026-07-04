@@ -120,33 +120,60 @@ export async function listMeetings(
   return { items: data, total: total.count, totalPages };
 }
 
-export async function generateAiAnswer(
-  meetingId: string,
-  question: string,
-  meetingSummary: string,
-) {
-  const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const completion = await openaiClient.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: `You are an AI assistant helping users understand their meeting. Based on the meeting summary below, answer the user's question accurately and concisely.\n\nMeeting Summary:\n${meetingSummary}`,
-      },
-      { role: "user", content: question },
-    ],
-    max_tokens: 500,
-  });
+export async function generateAiAnswer({
+  meetingId,
+  agentId,
+  question,
+  meetingSummary,
+}: {
+  meetingId: string;
+  agentId: string;
+  question: string;
+  meetingSummary: string;
+}) {
+  // Reply AS the meeting's agent — it is already a member of the chat channel,
+  // so Stream accepts the message (the same pattern the webhook uses).
+  const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+  if (!agent) throw new Error("Agent not found for this meeting");
 
-  const answer = completion.choices[0]?.message?.content;
+  const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  let answer: string | null;
+  try {
+    const completion = await openaiClient.chat.completions.create({
+      model: process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are ${agent.name}, an AI assistant helping the user revisit a completed meeting. Answer the user's question using the meeting summary below. Write the answer naturally in your own words — do not just repeat or paste the summary.\n\nMeeting summary:\n${meetingSummary}`,
+        },
+        { role: "user", content: question },
+      ],
+      max_tokens: 500,
+    });
+    answer = completion.choices[0]?.message?.content ?? null;
+  } catch (error) {
+    console.error("[askAi] OpenAI request failed", error);
+    throw new Error("Failed to generate an AI answer. Please try again.");
+  }
+
   if (!answer) throw new Error("OpenAI returned an empty response");
 
+  const avatarUrl = generateAvatarUri({
+    seed: agent.name,
+    variant: "botttsNeutral",
+  });
+
   await streamChat.upsertUser({
-    id: "ai-assistant",
-    name: "AI Assistant",
-    role: "user",
+    id: agent.id,
+    name: agent.name,
+    image: avatarUrl,
   });
 
   const channel = streamChat.channel("messaging", meetingId);
-  await channel.sendMessage({ text: answer, user_id: "ai-assistant" });
+  await channel.watch();
+  await channel.sendMessage({
+    text: answer,
+    user: { id: agent.id, name: agent.name, image: avatarUrl },
+  } as never);
 }

@@ -12,7 +12,11 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:generate": "drizzle-kit generate",
-    "dev:webhook": "ngrok http --url=nonprojecting-uncharactered-dorene.ngrok-free.dev 3000"
+    "dev:webhook": "ngrok http --url=nonprojecting-uncharactered-dorene.ngrok-free.dev 3000",
+    "dev:inngest": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
+    "webhook:dev": "tsx scripts/set-webhook.ts dev",
+    "webhook:prod": "tsx scripts/set-webhook.ts prod",
+    "webhook:show": "tsx scripts/set-webhook.ts show"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
@@ -25,7 +29,7 @@
     "@polar-sh/better-auth": "^1.8.3",
     "@polar-sh/sdk": "^0.46.5",
     "@stream-io/node-sdk": "^0.4.24",
-    "@stream-io/openai-realtime-api": "^0.1.4",
+    "@stream-io/openai-realtime-api": "^0.4.0",
     "@stream-io/video-react-sdk": "^1.18.0",
     "@tanstack/react-query": "^5.76.1",
     "@tanstack/react-table": "^8.21.3",

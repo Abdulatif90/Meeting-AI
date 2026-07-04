@@ -1,3 +1,5 @@
+"use client";
+
 import { MeetingGetOne } from "../../types";
 import { MeetingDetailsTabs } from "./meeting-details-tabs";
 

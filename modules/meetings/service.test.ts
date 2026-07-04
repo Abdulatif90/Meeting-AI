@@ -5,8 +5,9 @@
 // Behaviors locked in:
 //   1. OpenAI is called with the meeting summary in the system prompt
 //      and the user's question as the user message
-//   2. The AI response is sent to the correct Stream Chat channel as "ai-assistant"
-//   3. The ai-assistant user is upserted before sending the message
+//   2. The AI response is sent to the correct Stream Chat channel AS THE AGENT
+//      (a real channel member), after the channel is watched
+//   3. The agent user is upserted before sending the message
 //   4. Throws (and does NOT send to chat) when OpenAI returns a null response
 //
 // vi.hoisted() is used for mocks that vi.mock() factories reference directly,
@@ -15,16 +16,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Hoist mock fns before vi.mock() factories run.
-const { mockCreate, mockSendMessage, mockUpsertUser, mockChannel } = vi.hoisted(() => ({
-  mockCreate: vi.fn(),
-  mockSendMessage: vi.fn().mockResolvedValue({}),
-  mockUpsertUser: vi.fn().mockResolvedValue({}),
-  mockChannel: vi.fn(),
-}));
+const { mockCreate, mockSendMessage, mockUpsertUser, mockWatch, mockChannel } =
+  vi.hoisted(() => ({
+    mockCreate: vi.fn(),
+    mockSendMessage: vi.fn().mockResolvedValue({}),
+    mockUpsertUser: vi.fn().mockResolvedValue({}),
+    mockWatch: vi.fn().mockResolvedValue({}),
+    mockChannel: vi.fn(),
+  }));
 
-// @/db is imported at module level by service.ts (used by other functions).
-// Mock it so the module loads without a real DB connection.
-vi.mock("@/db", () => ({ db: {} }));
+// generateAiAnswer looks up the meeting's agent (to reply as that agent),
+// so the db mock resolves db.select().from(agents).where() to agentResult.
+let agentResult: unknown[];
+vi.mock("@/db", () => ({
+  db: {
+    select: () => ({ from: () => ({ where: () => Promise.resolve(agentResult) }) }),
+  },
+}));
 vi.mock("@/lib/avatar", () => ({ generateAvatarUri: () => "avatar://stub" }));
 
 // OpenAI: mock as a class so `new OpenAI()` works correctly.
@@ -41,20 +49,32 @@ vi.mock("@/lib/stream-chat", () => ({
 
 import { generateAiAnswer } from "./service";
 
+const AGENT = { id: "agent_1", name: "Test Agent" };
+
+const answer = (content: string | null) =>
+  mockCreate.mockResolvedValue({ choices: [{ message: { content } }] });
+
 describe("generateAiAnswer", () => {
   beforeEach(() => {
+    agentResult = [AGENT];
     mockCreate.mockReset();
     mockSendMessage.mockReset().mockResolvedValue({});
     mockUpsertUser.mockReset().mockResolvedValue({});
-    mockChannel.mockReset().mockReturnValue({ sendMessage: mockSendMessage });
+    mockWatch.mockReset().mockResolvedValue({});
+    mockChannel
+      .mockReset()
+      .mockReturnValue({ watch: mockWatch, sendMessage: mockSendMessage });
   });
 
   it("sends the meeting summary in the system prompt and the question as user message", async () => {
-    mockCreate.mockResolvedValue({
-      choices: [{ message: { content: "We discussed project X timelines." } }],
-    });
+    answer("We discussed project X timelines.");
 
-    await generateAiAnswer("m1", "What was discussed?", "Summary: project X timelines.");
+    await generateAiAnswer({
+      meetingId: "m1",
+      agentId: AGENT.id,
+      question: "What was discussed?",
+      meetingSummary: "Summary: project X timelines.",
+    });
 
     const callArgs = mockCreate.mock.calls[0][0];
     expect(callArgs.messages[0].role).toBe("system");
@@ -65,40 +85,50 @@ describe("generateAiAnswer", () => {
     });
   });
 
-  it("sends the AI response to the correct Stream Chat channel as ai-assistant", async () => {
-    mockCreate.mockResolvedValue({
-      choices: [{ message: { content: "Topics covered: planning, deadlines." } }],
+  it("watches the channel and sends the AI response as the meeting's agent", async () => {
+    answer("Topics covered: planning, deadlines.");
+
+    await generateAiAnswer({
+      meetingId: "meeting-123",
+      agentId: AGENT.id,
+      question: "What topics were covered?",
+      meetingSummary: "Summary",
     });
 
-    await generateAiAnswer("meeting-123", "What topics were covered?", "Summary");
-
     expect(mockChannel).toHaveBeenCalledWith("messaging", "meeting-123");
+    expect(mockWatch).toHaveBeenCalled();
     expect(mockSendMessage).toHaveBeenCalledWith({
       text: "Topics covered: planning, deadlines.",
-      user_id: "ai-assistant",
+      user: expect.objectContaining({ id: AGENT.id, name: AGENT.name }),
     });
   });
 
-  it("upserts the ai-assistant user before sending the message", async () => {
-    mockCreate.mockResolvedValue({
-      choices: [{ message: { content: "Answer" } }],
+  it("upserts the agent user before sending the message", async () => {
+    answer("Answer");
+
+    await generateAiAnswer({
+      meetingId: "m1",
+      agentId: AGENT.id,
+      question: "Question?",
+      meetingSummary: "Summary",
     });
 
-    await generateAiAnswer("m1", "Question?", "Summary");
-
     expect(mockUpsertUser).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "ai-assistant" }),
+      expect.objectContaining({ id: AGENT.id }),
     );
   });
 
   it("throws and does not send to chat when OpenAI returns a null response", async () => {
-    mockCreate.mockResolvedValue({
-      choices: [{ message: { content: null } }],
-    });
+    answer(null);
 
-    await expect(generateAiAnswer("m1", "Question?", "Summary")).rejects.toThrow(
-      "OpenAI returned an empty response",
-    );
+    await expect(
+      generateAiAnswer({
+        meetingId: "m1",
+        agentId: AGENT.id,
+        question: "Question?",
+        meetingSummary: "Summary",
+      }),
+    ).rejects.toThrow("OpenAI returned an empty response");
     expect(mockSendMessage).not.toHaveBeenCalled();
   });
 });

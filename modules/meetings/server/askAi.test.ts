@@ -86,15 +86,18 @@ describe("meetings.askAi", () => {
   });
 
   it("calls generateAiAnswer with the correct args when the meeting is ready", async () => {
-    meetingResult = [{ id: "m1", userId: "user_A", summary: "Meeting about project X" }];
+    meetingResult = [
+      { id: "m1", userId: "user_A", agentId: "agent_1", summary: "Meeting about project X" },
+    ];
 
     await callAskAi("m1", "What was discussed?");
 
     expect(mockGenerateAiAnswer).toHaveBeenCalledOnce();
-    expect(mockGenerateAiAnswer).toHaveBeenCalledWith(
-      "m1",
-      "What was discussed?",
-      "Meeting about project X",
-    );
+    expect(mockGenerateAiAnswer).toHaveBeenCalledWith({
+      meetingId: "m1",
+      agentId: "agent_1",
+      question: "What was discussed?",
+      meetingSummary: "Meeting about project X",
+    });
   });
 });
