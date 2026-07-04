@@ -324,16 +324,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing meetingId" }, { status: 400 });
     }
 
-    const call = streamVideo.video.call("default", meetingId);
-
-    // queryCallParticipants now requires a filter; read the live session's
-    // per-role counts instead. End the call once no host (admin) remains.
-    const { call: callState } = await call.get();
-    const hostCount =
-      callState.session?.participants_count_by_role?.admin ?? 0;
-
-    if (hostCount === 0) {
-      await call.end();
+    // End the call only when the HOST (admin) is the one who left — e.g.
+    // they closed the tab without pressing "end". Departures of other
+    // participants (the AI agent, guests) must NOT end the call: a failed
+    // agent join fires participant_left and previously killed the whole
+    // call, kicking the host 2-3s after joining.
+    if (event.participant?.role === "admin") {
+      const call = streamVideo.video.call("default", meetingId);
+      await call.end().catch((error) => {
+        // Already-ended calls throw here; log and move on.
+        console.error("Failed to end call after host left", error);
+      });
     }
   } else if (
     eventType === "call.session_ended" ||
