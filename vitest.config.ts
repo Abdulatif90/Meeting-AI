@@ -1,16 +1,34 @@
 // vitest.config.ts (project root)
 //
-// Two things are configured here:
+// Configured here:
 // 1. The "@" alias — the codebase imports with "@/db", "@/trpc/init", etc.
-//    Without it, every import inside a test fails to resolve.
-// 2. "server-only" is stubbed to an empty module. Next.js code imports the
-//    real "server-only" package, which throws when run outside a server
-//    context (like Vitest). Aliasing it to an empty file neutralizes it.
+// 2. "server-only" / "client-only" stubbed to an empty module (they throw
+//    outside their intended runtime).
+// 3. A pre-transform for .tsx files: the project tsconfig uses Next's
+//    `jsx: "preserve"`, which makes vite's esbuild leave JSX untouched and
+//    breaks component tests. This plugin compiles JSX itself before vite
+//    sees the file.
 
 import { defineConfig } from "vitest/config";
+import { transform } from "esbuild";
 import path from "path";
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "tsx-jsx-transform",
+      enforce: "pre",
+      async transform(code, id) {
+        if (!id.endsWith(".tsx")) return null;
+        const result = await transform(code, {
+          loader: "tsx",
+          jsx: "automatic",
+          jsxImportSource: "react",
+        });
+        return { code: result.code, map: result.map || null };
+      },
+    },
+  ],
   test: {
     environment: "node",
     globals: true,

@@ -73,6 +73,9 @@ export const CommandSelect = ({
           {options.map((option) => (
             <CommandItem
               key={option.id}
+              // Explicit value keeps cmdk's keyboard (arrow/enter) selection
+              // tracking stable instead of relying on rendered text content.
+              value={option.value}
               onSelect={() => {
                 onSelect(option.value)
                 setOpen(false);

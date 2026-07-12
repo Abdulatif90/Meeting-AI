@@ -60,11 +60,15 @@ export const CallActive = ({
           ) : null}
         </div>
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] flex-1 min-h-0">
-        <div className="h-full rounded-3xl overflow-hidden bg-[#101213]">
+      {/* Below xl the grid stacks into one column: the video row must take the
+          leftover viewport height (minmax(0,1fr)) and the sidebar a capped
+          auto row — otherwise content-sized rows push the host video and
+          controls below the viewport. */}
+      <div className="grid gap-4 flex-1 min-h-0 grid-rows-[minmax(0,1fr)_auto] xl:grid-rows-1 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-h-0 h-full rounded-3xl overflow-hidden bg-[#101213]">
           <SpeakerLayout ParticipantViewUISpotlight={SpotlightParticipantView} />
         </div>
-        <div className="bg-[#101213] rounded-3xl p-4 flex flex-col gap-y-4">
+        <div className="bg-[#101213] rounded-3xl p-4 flex flex-col gap-y-4 min-h-0 overflow-hidden max-h-56 xl:max-h-none">
           <div className="flex flex-col gap-y-3">
             <p className="text-sm font-medium text-white/70">Host</p>
             {localParticipant ? (
@@ -93,9 +97,9 @@ export const CallActive = ({
               </div>
             ) : null}
           </div>
-          <div className="flex flex-col gap-y-3 min-h-0">
+          <div className="flex flex-col gap-y-3 min-h-0 flex-1">
             <p className="text-sm font-medium text-white/70">Participants</p>
-            <div className="flex flex-col gap-y-2 overflow-y-auto">
+            <div className="flex flex-col gap-y-2 overflow-y-auto min-h-0">
               {remoteParticipants.length > 0 ? (
                 remoteParticipants.map((participant) => {
                   const isHost = participant.roles?.includes("admin");

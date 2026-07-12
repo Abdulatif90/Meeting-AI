@@ -139,6 +139,7 @@ Open http://localhost:3000, create an agent, create a meeting, join the call, an
 | Script | Purpose |
 |---|---|
 | `npm run dev` | Dev server (Turbopack, 4 GB heap) |
+| `npm run dev:webpack` | Dev server without Turbopack (webpack) — for isolating Turbopack-only issues |
 | `npm run dev:webhook` | ngrok tunnel for Stream webhooks |
 | `npm run dev:inngest` | Inngest dev server (background jobs) |
 | `npm run webhook:dev/prod/show` | Point Stream webhooks at ngrok / prod / inspect |
@@ -182,6 +183,8 @@ npm run test:run
 
 Tests mock `@/db`, Stream, and OpenAI at the module boundary — no network, no real keys needed. See [doc/TEST.md](doc/TEST.md) and [doc/TESTING.md](doc/TESTING.md) for the mocking patterns (chainable DB mocks, `vi.hoisted()` usage).
 
+Component tests run in jsdom with Testing Library (`// @vitest-environment jsdom` pragma) — see [components/command-select.test.ts](components/command-select.test.ts) for the keyboard-navigation regression test. JSX in tested components is compiled by a small esbuild pre-transform in [vitest.config.ts](vitest.config.ts) (the project tsconfig uses Next's `jsx: "preserve"`).
+
 ## 📚 Further Docs
 
 | Doc | Contents |
@@ -197,7 +200,8 @@ Tests mock `@/db`, Stream, and OpenAI at the module boundary — no network, no 
 
 | Symptom | Likely cause |
 |---|---|
-| Agent doesn't join the call | ngrok not running, webhooks pointed at prod (`npm run webhook:show`), or OpenAI credit balance is empty |
+| Agent doesn't join the call | ngrok not running, webhooks pointed at prod (`npm run webhook:show`), OpenAI credit balance is empty, or you re-joined a non-`upcoming` meeting (create a fresh one) |
+| Agent joins but stays silent | Check `.agent-debug.log` in the project root — every realtime event (speech detected, responses, errors, disconnects) is logged there. The webhook enables server VAD explicitly; make sure your mic is unmuted in the call |
 | Ask AI gives template-like answers | OpenAI quota exhausted — the webhook falls back to summary excerpts |
 | Meeting stuck in "processing" | Inngest dev server not running (`npm run dev:inngest`), or OpenAI quota — check runs at http://localhost:8288 |
 | Webhook 401 "Invalid signature" | Stream keys in `.env` don't match the Stream app the webhooks are registered on |

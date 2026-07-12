@@ -67,6 +67,9 @@ export const ChatUI = ({
     };
 
     initChannel().catch((error) => {
+      // Teardown race: leaving the tab disconnects the client while watch()
+      // is still in flight — expected, not a real failure.
+      if (isCancelled) return;
       console.error("Failed to initialize meeting chat", error);
     });
 
@@ -86,13 +89,14 @@ export const ChatUI = ({
     );
   }
   return (
-    <div className="bg-white rounded-lg border overflow-hidden">
+    // Fixed height + str-chat stretched to fill it: scrolling is owned by
+    // MessageList's internal list container (Stream's documented layout).
+    // A custom max-h wrapper around MessageList breaks its scroll behavior.
+    <div className="bg-white rounded-lg border overflow-hidden h-[calc(100vh-18rem)] min-h-96 [&_.str-chat]:h-full">
       <Chat client={client}>
         <Channel channel={channel}>
           <Window>
-            <div className="flex-1 overflow-y-auto max-h-[calc(100vh-23rem)] border-b">
-              <MessageList />
-            </div>
+            <MessageList />
             {/* Default submit sends the message to Stream, which fires the
                 `message.new` webhook → the agent's AI reply. */}
             <MessageInput />

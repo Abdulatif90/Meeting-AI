@@ -20,18 +20,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Providers must live INSIDE <body>. Client components wrapping <html>
+  // make the SSR and client trees diverge, which shifts every useId/Radix
+  // id below them and causes app-wide hydration mismatches.
   return (
-    <NuqsAdapter>
-      <TRPCReactProvider>
-        <html lang="en">
-          <body
-            className={`${inter.className} antialiased`}
-          >
-            <Toaster />
+    <html lang="en">
+      <body className={`${inter.className} antialiased`}>
+        <NuqsAdapter>
+          <TRPCReactProvider>
             {children}
-          </body>
-        </html>
-      </TRPCReactProvider>
-    </NuqsAdapter>
+            <Toaster />
+          </TRPCReactProvider>
+        </NuqsAdapter>
+      </body>
+    </html>
   );
 }

@@ -54,7 +54,7 @@ export const HomeView = () => {
               <Link href="/sign-in">Sign in</Link>
             </Button>
             <Button asChild>
-              <Link href="/sign-up">Get started</Link>
+              <Link href="/sign-up">Sign up</Link>
             </Button>
           </div>
         </header>
