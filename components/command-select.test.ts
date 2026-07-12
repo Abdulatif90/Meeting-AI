@@ -81,4 +81,27 @@ describe("CommandSelect keyboard navigation", () => {
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledWith("b2");
   });
+
+  it("opens the options list with ArrowDown on the focused trigger", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+
+    render(
+      h(CommandSelect, {
+        options,
+        onSelect,
+        onSearch: () => {},
+        value: "",
+        placeholder: "Select an agent",
+      }),
+    );
+
+    const trigger = screen.getByRole("button", { name: /select an agent/i });
+    trigger.focus();
+
+    await user.keyboard("{ArrowDown}");
+
+    const items = await screen.findAllByRole("option");
+    expect(items).toHaveLength(3);
+  });
 });
