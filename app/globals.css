@@ -4,7 +4,12 @@
 @import "@stream-io/video-react-sdk/dist/css/styles.css";
 @import "stream-chat-react/dist/css/v2/index.css";
 
-
+/* SpeakerLayout wrapper relies on flex-grow alone; without min-height:0 the
+   16:9 spotlight sets its intrinsic height and pushes the participants bar
+   (the host tile) below the container's overflow-hidden edge. */
+.str-video__speaker-layout__wrapper {
+  min-height: 0;
+}
 
 @custom-variant dark (&:is(.dark *));
 
