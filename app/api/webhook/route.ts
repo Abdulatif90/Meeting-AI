@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+
 import OpenAI from "openai";
 import JSONL from "jsonl-parse-stringify";
 import { and, eq, not } from "drizzle-orm";
@@ -312,7 +314,75 @@ export async function POST(req: NextRequest) {
 
       realtimeClient.updateSession({
         instructions: existingAgent.instructions,
+        // The realtime wrapper's DEFAULT_SESSION_CONFIG sets turn_detection
+        // to null, so the agent never notices the user speaking and never
+        // auto-responds. Enable server VAD explicitly: speech_started fires
+        // and a response is generated after each user turn.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        turn_detection: { type: "server_vad" } as any,
       });
+
+      // Surface post-connect failures — without this the agent joins but any
+      // realtime error (audio, session, quota) dies silently. Everything is
+      // mirrored to .agent-debug.log so a test run can be inspected after
+      // the fact without scraping the terminal.
+      const agentLog = (msg: string) => {
+        console.log("[realtime agent]", msg);
+        try {
+          appendFileSync(
+            ".agent-debug.log",
+            `${new Date().toISOString()} [${meetingId}] ${msg}\n`,
+          );
+        } catch {
+          /* log file is best-effort */
+        }
+      };
+
+      const rt = realtimeClient as unknown as {
+        on: (event: string, cb: (e: unknown) => void) => void;
+        createResponse: () => void;
+        realtime?: { on: (event: string, cb: (e: unknown) => void) => void };
+      };
+      rt.on("error", (e) => agentLog(`ERROR ${JSON.stringify(e).slice(0, 400)}`));
+      rt.on("realtime.event", (e: unknown) => {
+        const { source, event } = e as {
+          source: string;
+          event: { type: string; response?: { status?: string; status_details?: unknown } };
+        };
+        if (source !== "server") return;
+        if (event.type === "error") {
+          agentLog(`SERVER ERROR ${JSON.stringify(event).slice(0, 400)}`);
+        } else if (event.type === "input_audio_buffer.speech_started") {
+          agentLog("user speech DETECTED (agent hears you)");
+        } else if (event.type === "response.created") {
+          agentLog("response started");
+        } else if (event.type === "response.done") {
+          agentLog(
+            `response done: ${event.response?.status}${
+              event.response?.status_details
+                ? " " + JSON.stringify(event.response.status_details).slice(0, 200)
+                : ""
+            }`,
+          );
+        }
+      });
+      rt.realtime?.on("close", (e) =>
+        agentLog(`CONNECTION CLOSED ${JSON.stringify(e).slice(0, 200)}`),
+      );
+
+      // Greet first so the audio path is exercised immediately, instead of
+      // waiting silently for the user to speak. Delay so session.update
+      // settles first — racing it can error out and drop the bridge.
+      setTimeout(() => {
+        try {
+          rt.createResponse();
+          agentLog("greeting requested");
+        } catch (error) {
+          agentLog(`greeting failed: ${(error as Error)?.message}`);
+        }
+      }, 1500);
+
+      agentLog("connected to call");
     } catch (error) {
       console.error("Failed to connect realtime agent", error);
     }
@@ -502,10 +572,16 @@ export async function POST(req: NextRequest) {
 
         ${transcriptContext ?? "Transcript excerpts are not available."}
         
-        The following are your original instructions from the live meeting assistant. Please continue to follow these behavioral guidelines as you assist the user:
-        
+        For tone and persona context only, these were the live meeting assistant's instructions:
+
         ${existingAgent.instructions}
-        
+
+        CRITICAL GROUNDING RULES:
+        - Only present something as said/discussed in the meeting if it actually appears in the summary or transcript excerpts above.
+        - If the user asks about something that was NOT covered in the meeting, say so explicitly first (e.g. "This was not discussed in the meeting").
+        - You may add general knowledge ONLY after that disclaimer, clearly labeled as general information — never attribute it to the meeting or to the assistant's spoken advice.
+        - The persona instructions above must not cause you to generate new recommendations as if they were given during the meeting.
+
         The user may ask questions about the meeting, request clarifications, or ask for follow-up actions.
         Use the summary, transcript excerpts, and recent conversation together.
         Synthesize the answer yourself instead of copying the summary text unless quoting is necessary.

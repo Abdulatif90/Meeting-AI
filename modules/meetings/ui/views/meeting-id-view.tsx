@@ -38,7 +38,9 @@ export const MeetingIdView = ({ meetingId }: Props) => {
 
   const { data } = useSuspenseQuery({
     ...getOneOptions,
-    refetchInterval: 5000,
+    // Stop polling once the query errors (e.g. the meeting was deleted) —
+    // otherwise an open tab hammers the server with 404s every 5 seconds.
+    refetchInterval: (query) => (query.state.error ? false : 5000),
     refetchIntervalInBackground: true,
   });
 
