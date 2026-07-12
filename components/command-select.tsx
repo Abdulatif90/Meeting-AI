@@ -45,6 +45,14 @@ export const CommandSelect = ({
     <>
       <Button
         onClick={() => setOpen(true)}
+        // Combobox UX: ArrowDown/ArrowUp on the closed trigger opens the
+        // options list, matching native <select> keyboard behavior.
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
         type="button"
         variant="outline"
         className={cn(

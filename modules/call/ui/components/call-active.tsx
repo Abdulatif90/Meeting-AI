@@ -65,7 +65,10 @@ export const CallActive = ({
           auto row — otherwise content-sized rows push the host video and
           controls below the viewport. */}
       <div className="grid gap-4 flex-1 min-h-0 grid-rows-[minmax(0,1fr)_auto] xl:grid-rows-1 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-h-0 h-full rounded-3xl overflow-hidden bg-[#101213]">
+        {/* flex-col is required: SpeakerLayout's wrapper sizes itself with
+            flex-grow, so in a block container it grows past the viewport and
+            the participants bar (host tile) gets clipped. */}
+        <div className="min-h-0 h-full rounded-3xl overflow-hidden bg-[#101213] flex flex-col">
           <SpeakerLayout ParticipantViewUISpotlight={SpotlightParticipantView} />
         </div>
         <div className="bg-[#101213] rounded-3xl p-4 flex flex-col gap-y-4 min-h-0 overflow-hidden max-h-56 xl:max-h-none">
