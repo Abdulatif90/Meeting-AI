@@ -16,9 +16,7 @@
 import "dotenv/config";
 import { StreamChat, type EventHook } from "stream-chat";
 
-const NGROK_URL =
-  "https://nonprojecting-uncharactered-dorene.ngrok-free.dev/api/webhook";
-const PROD_URL = "https://meeting-ai-saas1.vercel.app/api/webhook";
+import { NGROK_URL, PROD_URL } from "./webhook-config";
 
 const targets: Record<string, string> = {
   dev: NGROK_URL,

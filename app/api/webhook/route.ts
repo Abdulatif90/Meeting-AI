@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 
 import OpenAI from "openai";
 import JSONL from "jsonl-parse-stringify";
@@ -30,6 +30,9 @@ const chatModel = process.env.OPENAI_CHAT_MODEL ?? "gpt-4o-mini";
 // "gpt-realtime". Override via OPENAI_REALTIME_MODEL if the account differs.
 const realtimeModel =
   process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime";
+// Matches StreamClient's default video base URL (lib/stream-video.ts passes
+// no custom basePath). Only needed because we bypass connectOpenAi() below.
+const STREAM_VIDEO_BASE_URL = "https://video.stream-io-api.com";
 
 /* ── In-memory lock to prevent duplicate AI replies from concurrent webhooks ── */
 const processingMessages = new Set<string>();
@@ -228,6 +231,235 @@ function verifySignatureWithSDK(body: string, signature: string): boolean {
   return streamVideo.verifyWebhook(body, signature);
 }
 
+function logAgentEvent(meetingId: string, msg: string) {
+  console.log("[realtime agent]", msg);
+  // Async, not appendFileSync: this runs on every realtime event (speech
+  // detected, response started/done, ...) while a call is live. A
+  // synchronous disk write here blocks Node's single thread and was adding
+  // to the latency that made Stream time out and retry webhooks (see
+  // activateMeetingAgent below).
+  appendFile(
+    ".agent-debug.log",
+    `${new Date().toISOString()} [${meetingId}] ${msg}\n`,
+  ).catch(() => {
+    /* log file is best-effort */
+  });
+}
+
+// Meeting ids with an in-flight or established agent connection. Stream
+// retries a webhook it didn't get a fast-enough response to, and retries of
+// call.session_started previously re-ran this whole join every time — the
+// SECOND connectOpenAi call for the same agent user makes Stream's SFU boot
+// the FIRST connection (a user can only have one active session), so the
+// agent would join and then get kicked ~seconds later. This guards against
+// that regardless of how many times the webhook fires for the same meeting.
+const activeAgentConnections = new Set<string>();
+
+// Connects the OpenAI realtime agent to the call. Stream expects the webhook
+// HTTP response within a few seconds; connectOpenAi's WebRTC + realtime
+// session handshake can take longer than that on its own, so this must be
+// fired-and-forgotten from the request handler instead of awaited — awaiting
+// it here previously caused Stream to time out and give up (status 0 on all
+// retries) before the agent ever finished connecting.
+async function joinRealtimeAgent(
+  meetingId: string,
+  agentId: string,
+  agentInstructions: string,
+) {
+  if (activeAgentConnections.has(meetingId)) {
+    logAgentEvent(meetingId, "join skipped: agent already connecting/connected");
+    return;
+  }
+  activeAgentConnections.add(meetingId);
+
+  try {
+    const call = streamVideo.video.call("default", meetingId);
+
+    // Bypasses streamVideo.video.connectOpenAi(): that helper generates its
+    // own call token internally with iat backdated only 1 second, which
+    // isn't enough headroom for this machine's clock skew and fails with
+    // "JWTAuth error: token used before issue at (iat)" (code 42). We
+    // replicate connectOpenAi's exact steps here with a token backdated 60
+    // seconds instead — same fix already applied to the user call token in
+    // modules/meetings/server/procedures.ts.
+    let createRealtimeClient: typeof import("@stream-io/openai-realtime-api").createRealtimeClient;
+    try {
+      ({ createRealtimeClient } = await import("@stream-io/openai-realtime-api"));
+    } catch {
+      throw new Error(
+        "Cannot create Realtime API client. Is @stream-io/openai-realtime-api installed?",
+      );
+    }
+
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    const agentToken = streamVideo.generateCallToken({
+      user_id: agentId,
+      call_cids: [call.cid],
+      iat: nowInSeconds - 60,
+      exp: nowInSeconds + 3600,
+    });
+
+    const realtimeClient = createRealtimeClient({
+      baseUrl: STREAM_VIDEO_BASE_URL,
+      call: { type: call.type, id: call.id },
+      streamApiKey: process.env.NEXT_PUBLIC_STREAM_VIDEO_API_KEY!,
+      streamUserToken: agentToken,
+      openAiApiKey: process.env.OPENAI_API_KEY!,
+      model: realtimeModel,
+    });
+    await realtimeClient.connect();
+
+    realtimeClient.updateSession({
+      instructions: agentInstructions,
+      // The realtime wrapper's DEFAULT_SESSION_CONFIG sets turn_detection
+      // to null, so the agent never notices the user speaking and never
+      // auto-responds. Enable server VAD explicitly: speech_started fires
+      // and a response is generated after each user turn.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      turn_detection: { type: "server_vad" } as any,
+    });
+
+    const agentLog = (msg: string) => logAgentEvent(meetingId, msg);
+
+    const rt = realtimeClient as unknown as {
+      on: (event: string, cb: (e: unknown) => void) => void;
+      createResponse: () => void;
+      realtime?: { on: (event: string, cb: (e: unknown) => void) => void };
+    };
+    rt.on("error", (e) => agentLog(`ERROR ${JSON.stringify(e).slice(0, 400)}`));
+    rt.on("realtime.event", (e: unknown) => {
+      const { source, event } = e as {
+        source: string;
+        event: { type: string; response?: { status?: string; status_details?: unknown } };
+      };
+      if (source !== "server") return;
+      if (event.type === "error") {
+        agentLog(`SERVER ERROR ${JSON.stringify(event).slice(0, 400)}`);
+      } else if (event.type === "input_audio_buffer.speech_started") {
+        agentLog("user speech DETECTED (agent hears you)");
+      } else if (event.type === "response.created") {
+        agentLog("response started");
+      } else if (event.type === "response.done") {
+        agentLog(
+          `response done: ${event.response?.status}${
+            event.response?.status_details
+              ? " " + JSON.stringify(event.response.status_details).slice(0, 200)
+              : ""
+          }`,
+        );
+      }
+    });
+    rt.realtime?.on("close", (e) => {
+      agentLog(`CONNECTION CLOSED ${JSON.stringify(e).slice(0, 200)}`);
+      // Allow a later call.session_started (e.g. the host restarting the
+      // call) to reconnect the agent instead of being silently skipped by
+      // the dedupe guard forever.
+      activeAgentConnections.delete(meetingId);
+    });
+
+    // Greet first so the audio path is exercised immediately, instead of
+    // waiting silently for the user to speak. Delay so session.update
+    // settles first — racing it can error out and drop the bridge.
+    setTimeout(() => {
+      try {
+        rt.createResponse();
+        agentLog("greeting requested");
+      } catch (error) {
+        agentLog(`greeting failed: ${(error as Error)?.message}`);
+      }
+    }, 1500);
+
+    agentLog("connected to call");
+  } catch (error) {
+    activeAgentConnections.delete(meetingId);
+    logAgentEvent(
+      meetingId,
+      `FAILED to connect: ${(error as Error)?.message ?? String(error)}`,
+    );
+    console.error("Failed to connect realtime agent", error);
+  }
+}
+
+// Meeting ids for which we've already asked Stream to start recording this
+// session — mirrors activeAgentConnections's purpose: without it, a retried
+// call.session_started webhook would call startRecording() again.
+const recordingStartedForMeeting = new Set<string>();
+
+// Nothing in this app (client or server) ever called startRecording()
+// before, and no call-type default enables it — meetings finished with no
+// recording, so meeting-details-tabs.tsx always showed "Recording is not
+// available yet". Stream only records when told to; we tell it here, right
+// when the session starts, mirroring how the realtime agent is joined.
+async function startCallRecording(meetingId: string) {
+  if (recordingStartedForMeeting.has(meetingId)) {
+    return;
+  }
+  recordingStartedForMeeting.add(meetingId);
+
+  try {
+    const call = streamVideo.video.call("default", meetingId);
+    await call.startRecording();
+    logAgentEvent(meetingId, "recording started");
+  } catch (error) {
+    recordingStartedForMeeting.delete(meetingId);
+    logAgentEvent(
+      meetingId,
+      `FAILED to start recording: ${(error as Error)?.message ?? String(error)}`,
+    );
+    console.error("Failed to start call recording", error);
+  }
+}
+
+// Looks up the meeting/agent and joins the realtime agent. Fired-and-forgotten
+// from the request handler (see call.session_started below) — three
+// sequential DB round trips plus the realtime handshake easily exceed
+// Stream's webhook timeout, and a slow ACK makes Stream retry the same event,
+// which previously re-ran this whole flow and duplicated the agent join.
+async function activateMeetingAgent(meetingId: string, eventTimestamp: Date) {
+  try {
+    const [existingMeeting] = await db
+      .select()
+      .from(meetings)
+      .where(
+        and(
+          eq(meetings.id, meetingId),
+          not(eq(meetings.status, "completed")),
+          not(eq(meetings.status, "active")),
+          not(eq(meetings.status, "cancelled")),
+        )
+      );
+
+    if (!existingMeeting) {
+      return;
+    }
+
+    await db
+      .update(meetings)
+      .set({
+        status: "active",
+        startedAt: existingMeeting.startedAt ?? eventTimestamp,
+        endedAt: null,
+      })
+      .where(eq(meetings.id, existingMeeting.id));
+
+    const [existingAgent] = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, existingMeeting.agentId));
+
+    if (!existingAgent) {
+      return;
+    }
+
+    await Promise.all([
+      startCallRecording(meetingId),
+      joinRealtimeAgent(meetingId, existingAgent.id, existingAgent.instructions),
+    ]);
+  } catch (error) {
+    console.error("Failed to activate meeting agent", error);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const signature = req.headers.get("x-signature");
   const apiKey = req.headers.get("x-api-key");
@@ -267,125 +499,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing meetingId" }, { status: 400 });
     }
 
-    const [existingMeeting] = await db
-      .select()
-      .from(meetings)
-      .where(
-        and(
-          eq(meetings.id, meetingId),
-          not(eq(meetings.status, "completed")),
-          not(eq(meetings.status, "active")),
-          not(eq(meetings.status, "cancelled")),
-        )
-      );
+    // ACK Stream immediately: the DB lookups + realtime handshake below can
+    // together take several seconds, longer than Stream will wait for a
+    // response (see activateMeetingAgent's comment above).
+    void activateMeetingAgent(
+      meetingId,
+      getEventTimestamp(event as unknown as Record<string, unknown>),
+    );
 
-    if (!existingMeeting) {
-      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
-    }
-
-    await db
-      .update(meetings)
-      .set({
-        status: "active",
-        startedAt:
-          existingMeeting.startedAt ??
-          getEventTimestamp(event as unknown as Record<string, unknown>),
-        endedAt: null,
-      })
-      .where(eq(meetings.id, existingMeeting.id));
-
-    const [existingAgent] = await db
-      .select()
-      .from(agents)
-      .where(eq(agents.id, existingMeeting.agentId));
-
-    if (!existingAgent) {
-      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
-    }
-
-    try {
-      const call = streamVideo.video.call("default", meetingId);
-      const realtimeClient = await streamVideo.video.connectOpenAi({
-        call,
-        openAiApiKey: process.env.OPENAI_API_KEY!,
-        agentUserId: existingAgent.id,
-        model: realtimeModel,
-      });
-
-      realtimeClient.updateSession({
-        instructions: existingAgent.instructions,
-        // The realtime wrapper's DEFAULT_SESSION_CONFIG sets turn_detection
-        // to null, so the agent never notices the user speaking and never
-        // auto-responds. Enable server VAD explicitly: speech_started fires
-        // and a response is generated after each user turn.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        turn_detection: { type: "server_vad" } as any,
-      });
-
-      // Surface post-connect failures — without this the agent joins but any
-      // realtime error (audio, session, quota) dies silently. Everything is
-      // mirrored to .agent-debug.log so a test run can be inspected after
-      // the fact without scraping the terminal.
-      const agentLog = (msg: string) => {
-        console.log("[realtime agent]", msg);
-        try {
-          appendFileSync(
-            ".agent-debug.log",
-            `${new Date().toISOString()} [${meetingId}] ${msg}\n`,
-          );
-        } catch {
-          /* log file is best-effort */
-        }
-      };
-
-      const rt = realtimeClient as unknown as {
-        on: (event: string, cb: (e: unknown) => void) => void;
-        createResponse: () => void;
-        realtime?: { on: (event: string, cb: (e: unknown) => void) => void };
-      };
-      rt.on("error", (e) => agentLog(`ERROR ${JSON.stringify(e).slice(0, 400)}`));
-      rt.on("realtime.event", (e: unknown) => {
-        const { source, event } = e as {
-          source: string;
-          event: { type: string; response?: { status?: string; status_details?: unknown } };
-        };
-        if (source !== "server") return;
-        if (event.type === "error") {
-          agentLog(`SERVER ERROR ${JSON.stringify(event).slice(0, 400)}`);
-        } else if (event.type === "input_audio_buffer.speech_started") {
-          agentLog("user speech DETECTED (agent hears you)");
-        } else if (event.type === "response.created") {
-          agentLog("response started");
-        } else if (event.type === "response.done") {
-          agentLog(
-            `response done: ${event.response?.status}${
-              event.response?.status_details
-                ? " " + JSON.stringify(event.response.status_details).slice(0, 200)
-                : ""
-            }`,
-          );
-        }
-      });
-      rt.realtime?.on("close", (e) =>
-        agentLog(`CONNECTION CLOSED ${JSON.stringify(e).slice(0, 200)}`),
-      );
-
-      // Greet first so the audio path is exercised immediately, instead of
-      // waiting silently for the user to speak. Delay so session.update
-      // settles first — racing it can error out and drop the bridge.
-      setTimeout(() => {
-        try {
-          rt.createResponse();
-          agentLog("greeting requested");
-        } catch (error) {
-          agentLog(`greeting failed: ${(error as Error)?.message}`);
-        }
-      }, 1500);
-
-      agentLog("connected to call");
-    } catch (error) {
-      console.error("Failed to connect realtime agent", error);
-    }
+    return NextResponse.json({ status: "ok" });
   } else if (eventType === "call.session_participant_left") {
     const event = payload as CallSessionParticipantLeftEvent;
     const meetingId = getMeetingIdFromEvent(event as unknown as Record<string, unknown>);

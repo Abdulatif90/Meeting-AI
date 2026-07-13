@@ -85,13 +85,16 @@ export const meetingsRouter = createTRPCRouter({
       },
     ]);
 
-    const expirationTime = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-    const issuedAt = Math.floor(Date.now() / 1000) - 60;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    const expirationTime = nowInSeconds + 3600; // 1 hour
+    // Backdate iat so minor clock skew between this server and Stream
+    // can't produce a token "used before issued at" (Stream error 42).
+    const issuedAt = nowInSeconds - 60;
 
     const token = streamVideo.generateUserToken({
       user_id: ctx.auth.user.id,
       exp: expirationTime,
-      validity_in_seconds: issuedAt,
+      iat: issuedAt,
     });
 
     return token;

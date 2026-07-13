@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  CallingState,
   StreamTheme,
   useCall,
   useCallStateHooks,
@@ -81,7 +82,14 @@ export const CallUI = ({ meetingId, meetingName }: Props) => {
   const handleJoin = async () => {
     if (!call) return;
 
-    await call.join();
+    // join() may only be called once per call instance. A double click on
+    // the lobby button, or a Fast Refresh remount that resets `show` to
+    // "lobby" while the call is still joined, would otherwise throw
+    // "Illegal State: call.join() shall be called only once".
+    const state = call.state.callingState;
+    if (state !== CallingState.JOINED && state !== CallingState.JOINING) {
+      await call.join();
+    }
 
     setShow("call");
   };
